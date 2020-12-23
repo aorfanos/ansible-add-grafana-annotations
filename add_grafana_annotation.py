@@ -28,7 +28,11 @@ options:
         required: true
     dashboard_id:
         description:
-            - The dashboard to annotate (if none specified, global annotation)
+            - The dashboard to annotate, by ID (if none specified, global annotation). Mutually exclusive with `dashboard_name`.
+        required: false
+    dashboard_name:
+        description:
+            - The dashboard to annotate, by name (if none specified, global annotation). Mutually exclusive with `dashboard_id`.
         required: false
     panel_id:
         description:
@@ -84,11 +88,21 @@ from datetime import datetime
 import time
 import requests
 import json
+import urllib.request as urllib
 
 
 def create_timestamp():
     _date = datetime.now()
     return int(_date.timestamp()) * 1000
+
+
+def get_dashboard_by_name(dashboardName, grafanaApiUrl, authHeaders):
+    _url = "{}/api/search?query={}".format(
+        grafanaApiUrl, urllib.quote(dashboardName, safe="")
+    )
+    result = requests.get(_url, headers=authHeaders).json()
+    for res in result:
+        return res["id"]
 
 
 def run_module():
@@ -97,6 +111,7 @@ def run_module():
         grafana_api_url=dict(type="str", required=True),
         grafana_api_key=dict(type="str", required=True, no_log=True),
         dashboard_id=dict(type="int", required=False),
+        dashboard_name=dict(type="str", required=False),
         panel_id=dict(type="int", required=False),
         text=dict(type="str", required=True),
         tags=dict(type="list", required=False, elements="str"),
@@ -106,6 +121,14 @@ def run_module():
 
     module = AnsibleModule(argument_spec=module_args, supports_check_mode=True)
 
+    headers = {
+        "Authorization": "Bearer {}".format(module.params["grafana_api_key"]),
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    url = "{}{}".format(module.params["grafana_api_url"], "/api/annotations")
+
     if module.check_mode:
         return result
 
@@ -114,20 +137,20 @@ def run_module():
         "text": module.params["text"],
     }
 
+    if module.params["dashboard_name"]:
+        _dashboard_id = get_dashboard_by_name(
+            module.params["dashboard_name"], module.params["grafana_api_url"], headers
+        )
+        if _dashboard_id is None:
+            module.fail_json(msg="Dashboard name does not exist", **data)
+        else:
+            data["dashboardId"] = _dashboard_id
     if module.params["dashboard_id"]:
         data["dashboardId"] = module.params["dashboard_id"]
     if module.params["panel_id"]:
         data["panelId"] = module.params["panel_id"]
     if module.params["tags"]:
         data["tags"] = module.params["tags"]
-
-    headers = {
-        "Authorization": "Bearer {}".format(module.params["grafana_api_key"]),
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-
-    url = "{}{}".format(module.params["grafana_api_url"], "/api/annotations")
 
     _result = requests.post(url, json.dumps(data), headers=headers)
 
